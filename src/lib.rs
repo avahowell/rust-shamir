@@ -18,6 +18,13 @@ pub struct SharePoint {
     y: gf::GF256e,
 }
 
+#[derive(Debug,PartialEq)]
+pub enum SecretSharingError {
+    TorNisZero,
+    InsufficientShares,
+    MissingShareForByte
+}
+
 pub type Shares = Vec<SharePoint>;
 
 // share_value shares a single `secret_byte` with Shamir's using parameters
@@ -58,9 +65,9 @@ fn share_value(t: u8, n: u8, secret_byte: &u8) -> Shares {
 // Vec<Share>, where each vec of shares belings to participant 1 -> n. t shares
 // are required to reconstruct the secret. `secret` is an arbitrary size byte
 // slice.
-pub fn construct_shares(t: u8, n: u8, secret: &[u8]) -> Result<Vec<Shares>, &str> {
+pub fn construct_shares(t: u8, n: u8, secret: &[u8]) -> Result<Vec<Shares>, SecretSharingError> {
     if t == 0 || n == 0 {
-        return Err("t and n can not be zero");
+        return Err(SecretSharingError::TorNisZero);
     }
 
     let mut shares: Vec<Vec<SharePoint>> = Vec::new();
@@ -108,14 +115,15 @@ fn reconstruct_value(shares: Vec<&SharePoint>) -> gf::GF256e {
 // the shared secret. The reconstruction is not verifiable; reconstructing
 // invalid shares will return an invalid secret, not an error. Returns an error
 // if len(shares) < t
-pub fn reconstruct(t: u8, shares: Vec<Shares>) -> Result<Vec<u8>, &'static str> {
+// pub fn reconstruct(t: u8, shares: Vec<Shares>) -> Result<Vec<u8>, &'static str> {
+pub fn reconstruct(t: u8, shares: Vec<Shares>) -> Result<Vec<u8>, SecretSharingError> {
     if shares.len() < t as usize {
-        return Err("not enough shares to reconstruct secret");
+        return Err(SecretSharingError::InsufficientShares);
     }
     let sz = shares[0].len();
     for i in 1..shares.len() {
         if shares[i].len() != sz {
-            return Err("missing share for byte");
+            return Err(SecretSharingError::MissingShareForByte);
         }
     }
 
@@ -213,5 +221,36 @@ mod tests {
 
         let reconstructed = reconstruct(3, shares).unwrap();
         assert!(vec_eq(&reconstructed, &secret));
+    }
+    #[test]
+    fn test_share_construct_reconstruct_insufficient_shares() {
+        let secret = vec![
+            0xca, 0xfe, 0xba, 0xbe, 0xfe, 0xed, 0xfa, 0xce, 0xca, 0xfe, 0xba, 0xbe, 0xfe, 0xed,
+            0xfa, 0xce, 0xca, 0xfe, 0xba, 0xbe, 0xfe, 0xed, 0xfa, 0xce, 0xca, 0xfe, 0xba, 0xbe,
+            0xfe, 0xed, 0xfa, 0xce, 0xca, 0xfe, 0xba, 0xbe, 0xfe, 0xed, 0xfa, 0xce, 0xca, 0xfe,
+            0xba, 0xbe, 0xfe, 0xed, 0xfa, 0xce, 0xca, 0xfe, 0xba, 0xbe, 0xfe, 0xed, 0xfa, 0xce,
+            0xca, 0xfe, 0xba, 0xbe, 0xfe, 0xed, 0xfa, 0xce, 0xca, 0xfe, 0xba, 0xbe, 0xfe, 0xed,
+            0xfa, 0xce, 0xca, 0xfe, 0xba, 0xbe, 0xfe, 0xed, 0xfa, 0xce, 0xca, 0xfe, 0xba, 0xbe,
+            0xfe, 0xed, 0xfa, 0xce, 0xca, 0xfe, 0xba, 0xbe, 0xfe, 0xed, 0xfa, 0xce, 0xca, 0xfe,
+            0xba, 0xbe, 0xfe, 0xed, 0xfa, 0xce, 0xca, 0xfe, 0xba, 0xbe, 0xfe, 0xed, 0xfa, 0xce,
+            0xca, 0xfe, 0xba, 0xbe, 0xfe, 0xed, 0xfa, 0xce, 0xca, 0xfe, 0xba, 0xbe, 0xfe, 0xed,
+            0xfa, 0xce, 0xca, 0xfe, 0xba, 0xbe, 0xfe, 0xed, 0xfa, 0xce,
+        ];
+        let t = 3;
+        let n = 5;
+        let todelete = 3;
+        let mut shares = construct_shares(t, n, &secret).unwrap();
+        for i in 0..todelete {
+            shares.pop();
+        }
+        let reconstructed = reconstruct(t, shares); // should error
+        assert_eq!(reconstructed, Err(SecretSharingError::InsufficientShares));
+
+        shares = construct_shares(t, n, &secret).unwrap();
+        for i in 0..todelete {
+            shares.pop();
+        }
+        let reconstructed_bad = reconstruct(t-1, shares); // should succeed
+        assert!(!vec_eq(&reconstructed_bad.unwrap(), &secret));
     }
 }
