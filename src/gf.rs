@@ -9,6 +9,8 @@ pub trait GfOps<T> {
 
 pub type GF256e = u8;
 
+// fully constant-time mplementation of GfOps for GF(2^8) with reduction
+// polynomial 0x11b.
 impl GfOps<GF256e> for GF256e {
     fn add(self, x: GF256e) -> GF256e {
         return self ^ x;

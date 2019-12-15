@@ -1,3 +1,8 @@
+// rust-shamir implements Shamir's secret sharing for arbitrarily sized secrets.
+// This is accomplished by using a new polynomial per byte, over the Galois
+// field GF(2^8). (t,n) are configurable; t is the minimum threshold required to
+// rebuild the secret and n is the number of shares to distribute.
+
 mod gf;
 
 extern crate rand;
@@ -6,7 +11,8 @@ use gf::GfOps;
 use rand::Rng;
 use std::cmp;
 
-#[derive(Debug)]
+// SharePoint defines a share for a particular byte. It is a point (x, y) on the
+// sharing polynomial.
 pub struct SharePoint {
     x: gf::GF256e,
     y: gf::GF256e,
@@ -14,15 +20,21 @@ pub struct SharePoint {
 
 pub type Shares = Vec<SharePoint>;
 
+// share_value shares a single `secret_byte` with Shamir's using parameters
+// (t,n). An entirely random polynomial is created with degree t-1 such that `t`
+// shares are required to reconstruct the secret.
 fn share_value(t: u8, n: u8, secret_byte: &u8) -> Shares {
     let mut rng = rand::thread_rng();
 
+    // pull random coefficients for the polynomial.
+	// since we're operating in GF(2^8), the coefficients are conveniently byte-aligned.
     let coeff: Vec<(gf::GF256e, gf::GF256e)> = vec![0; n as usize]
         .iter()
         .enumerate()
         .map(|(i, _)| (rng.gen(), cmp::max((t - 1).saturating_sub(i as u8), 1)))
         .collect();
 
+    // construct the polynomial
     // f(x) = mx^t-1 + m2x^t-2 ... + b
     let p = |x: gf::GF256e| {
         coeff
@@ -31,6 +43,7 @@ fn share_value(t: u8, n: u8, secret_byte: &u8) -> Shares {
             .add(*secret_byte)
     };
 
+    // split the secret for x = 1..n
     vec![0; n as usize]
         .iter()
         .enumerate()
@@ -41,6 +54,10 @@ fn share_value(t: u8, n: u8, secret_byte: &u8) -> Shares {
         .collect()
 }
 
+// construct_shares creates a new Share of the supplied `secret`. It returns a
+// Vec<Share>, where each vec of shares belings to participant 1 -> n. t shares
+// are required to reconstruct the secret. `secret` is an arbitrary size byte
+// slice.
 pub fn construct_shares(t: u8, n: u8, secret: &[u8]) -> Result<Vec<Shares>, &str> {
     if t == 0 || n == 0 {
         return Err("t and n can not be zero");
@@ -60,18 +77,23 @@ pub fn construct_shares(t: u8, n: u8, secret: &[u8]) -> Result<Vec<Shares>, &str
     Ok(shares)
 }
 
+// lagrange_interpolate computes the lagrange polynomial from the supplied
+// shares, then returns the value of the interpolated polynomial at `x`.
 fn lagrange_interpolate(shares: Vec<&SharePoint>, x: gf::GF256e) -> gf::GF256e {
     let mut y: gf::GF256e = 0;
     for j in 0..shares.len() {
+        // compute Π((x - xm) / (xj - xm))
         let mut phi: gf::GF256e = 1;
         for m in 0..shares.len() {
             if shares[j].x == shares[m].x {
                 continue;
             }
+            // z = (x - xm), q = (xj - xm); z/q
             let z = x.sub(shares[m].x);
             let q = shares[j].x.sub(shares[m].x);
             phi = phi.mul(z.div(q))
         }
+        // compute ΣyjΠ
         y = y.add(shares[j].y.mul(phi))
     }
 
@@ -82,6 +104,10 @@ fn reconstruct_value(shares: Vec<&SharePoint>) -> gf::GF256e {
     return lagrange_interpolate(shares, 0);
 }
 
+// reconstruct takes a slice of shares and a (t,n), and attempts to reconstruct
+// the shared secret. The reconstruction is not verifiable; reconstructing
+// invalid shares will return an invalid secret, not an error. Returns an error
+// if len(shares) < t
 pub fn reconstruct(t: u8, shares: Vec<Shares>) -> Result<Vec<u8>, &'static str> {
     if shares.len() < t as usize {
         return Err("not enough shares to reconstruct secret");
@@ -118,7 +144,6 @@ mod tests {
         let secret = vec![0xfe, 0xff, 0xaf, 0xbe];
         let shares = construct_shares(3, 5, &secret).unwrap();
         assert_eq!(shares.len(), 5);
-        println!("{:#?}", shares);
     }
     #[test]
     fn test_share_construct_reconstruct() {
@@ -187,7 +212,6 @@ mod tests {
         assert_eq!(shares.len(), 5);
 
         let reconstructed = reconstruct(3, shares).unwrap();
-        assert_eq!(vec_eq(&reconstructed, &secret), true);
-        println!("{:#?}", reconstructed);
+        assert!(vec_eq(&reconstructed, &secret));
     }
 }
