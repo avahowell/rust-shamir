@@ -13,6 +13,7 @@ use std::cmp;
 
 // SharePoint defines a share for a particular byte. It is a point (x, y) on the
 // sharing polynomial.
+#[derive(Clone, Copy)]
 pub struct SharePoint {
     x: gf::GF256e,
     y: gf::GF256e,
@@ -69,16 +70,15 @@ pub fn construct_shares(t: u8, n: u8, secret: &[u8]) -> Result<Vec<Shares>, Secr
         return Err(SecretSharingError::TorNisZero);
     }
 
-    let mut shares: Vec<Vec<SharePoint>> = Vec::new();
-    for _ in 0..n {
-        shares.push(Vec::new());
-    }
-    for b in secret.iter() {
-        let mut sp = share_value(t, n, b);
-        for i in 0..n {
-            shares[i as usize].push(sp.pop().unwrap());
-        }
-    }
+    let shares = secret.iter().map(|b| share_value(t, n, b)).fold(
+        vec![Vec::new(); n as usize],
+        |mut shares, share_bytes| {
+            for i in 0..share_bytes.len() {
+                shares[i].push(share_bytes[i]);
+            }
+            shares
+        },
+    );
 
     Ok(shares)
 }
