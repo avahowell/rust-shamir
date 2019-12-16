@@ -115,7 +115,6 @@ fn reconstruct_value(shares: Vec<&SharePoint>) -> gf::GF256e {
 // the shared secret. The reconstruction is not verifiable; reconstructing
 // invalid shares will return an invalid secret, not an error. Returns an error
 // if len(shares) < t
-// pub fn reconstruct(t: u8, shares: Vec<Shares>) -> Result<Vec<u8>, &'static str> {
 pub fn reconstruct(t: u8, shares: Vec<Shares>) -> Result<Vec<u8>, SecretSharingError> {
     if shares.len() < t as usize {
         return Err(SecretSharingError::InsufficientShares);
