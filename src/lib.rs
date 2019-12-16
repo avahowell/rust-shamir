@@ -18,11 +18,10 @@ pub struct SharePoint {
     y: gf::GF256e,
 }
 
-#[derive(Debug,PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum SecretSharingError {
     TorNisZero,
-    InsufficientShares,
-    MissingShareForByte
+    MissingShareForByte,
 }
 
 pub type Shares = Vec<SharePoint>;
@@ -34,7 +33,7 @@ fn share_value(t: u8, n: u8, secret_byte: &u8) -> Shares {
     let mut rng = rand::thread_rng();
 
     // pull random coefficients for the polynomial.
-	// since we're operating in GF(2^8), the coefficients are conveniently byte-aligned.
+    // since we're operating in GF(2^8), the coefficients are conveniently byte-aligned.
     let coeff: Vec<(gf::GF256e, gf::GF256e)> = vec![0; n as usize]
         .iter()
         .enumerate()
@@ -87,53 +86,41 @@ pub fn construct_shares(t: u8, n: u8, secret: &[u8]) -> Result<Vec<Shares>, Secr
 // lagrange_interpolate computes the lagrange polynomial from the supplied
 // shares, then returns the value of the interpolated polynomial at `x`.
 fn lagrange_interpolate(shares: Vec<&SharePoint>, x: gf::GF256e) -> gf::GF256e {
-    let mut y: gf::GF256e = 0;
-    for j in 0..shares.len() {
-        // compute Π((x - xm) / (xj - xm))
-        let mut phi: gf::GF256e = 1;
-        for m in 0..shares.len() {
-            if shares[j].x == shares[m].x {
-                continue;
-            }
-            // z = (x - xm), q = (xj - xm); z/q
-            let z = x.sub(shares[m].x);
-            let q = shares[j].x.sub(shares[m].x);
-            phi = phi.mul(z.div(q))
-        }
-        // compute ΣyjΠ
-        y = y.add(shares[j].y.mul(phi))
-    }
+    shares.iter().fold(0 as gf::GF256e, |y, j| {
+        let phi = shares
+            .iter()
+            .filter(|m| m.x != j.x)
+            .fold(1 as gf::GF256e, |phi, m| {
+                phi.mul(x.sub(m.x).div(j.x.sub(m.x)))
+            });
 
-    y
+        y.add(j.y.mul(phi))
+    })
 }
 
 fn reconstruct_value(shares: Vec<&SharePoint>) -> gf::GF256e {
-    return lagrange_interpolate(shares, 0);
+    lagrange_interpolate(shares, 0)
 }
 
-// reconstruct takes a slice of shares and a (t,n), and attempts to reconstruct
-// the shared secret. The reconstruction is not verifiable; reconstructing
-// invalid shares will return an invalid secret, not an error. Returns an error
-// if len(shares) < t
-pub fn reconstruct(t: u8, shares: Vec<Shares>) -> Result<Vec<u8>, SecretSharingError> {
-    if shares.len() < t as usize {
-        return Err(SecretSharingError::InsufficientShares);
-    }
+// reconstruct takes a slice of shares and attempts to reconstruct the shared
+// secret. The reconstruction is not verifiable; reconstructing invalid shares
+// will return an invalid secret, not an error.
+pub fn reconstruct(shares: Vec<Shares>) -> Result<Vec<u8>, SecretSharingError> {
+    // ensure the blobs are the same length
     let sz = shares[0].len();
-    for i in 1..shares.len() {
-        if shares[i].len() != sz {
-            return Err(SecretSharingError::MissingShareForByte);
-        }
+    let all_same_len = shares.iter().all(|share| share.len() == sz);
+    if !all_same_len {
+        return Err(SecretSharingError::MissingShareForByte);
     }
 
-    let mut result: Vec<u8> = vec![];
-    for i in 0..sz {
-        let mut byte_shares: Vec<&SharePoint> = Vec::new();
-        for t in 0..shares.len() {
-            byte_shares.push(&shares[t][i]);
-        }
-        result.push(reconstruct_value(byte_shares))
-    }
+    let result = vec![0; sz as usize]
+        .iter()
+        .enumerate()
+        .map(|(i, _)| {
+            let byte_shares = shares.iter().map(|share| &share[i]);
+            reconstruct_value(byte_shares.collect())
+        })
+        .collect();
 
     Ok(result)
 }
@@ -218,11 +205,11 @@ mod tests {
         let shares = construct_shares(3, 5, &secret).unwrap();
         assert_eq!(shares.len(), 5);
 
-        let reconstructed = reconstruct(3, shares).unwrap();
+        let reconstructed = reconstruct(shares).unwrap();
         assert!(vec_eq(&reconstructed, &secret));
     }
     #[test]
-    fn test_share_construct_reconstruct_insufficient_shares() {
+    fn test_share_construct_reconstruct_shares_omitting() {
         let secret = vec![
             0xca, 0xfe, 0xba, 0xbe, 0xfe, 0xed, 0xfa, 0xce, 0xca, 0xfe, 0xba, 0xbe, 0xfe, 0xed,
             0xfa, 0xce, 0xca, 0xfe, 0xba, 0xbe, 0xfe, 0xed, 0xfa, 0xce, 0xca, 0xfe, 0xba, 0xbe,
@@ -237,19 +224,20 @@ mod tests {
         ];
         let t = 3;
         let n = 5;
-        let todelete = 3;
+        let mut todelete = 2;
         let mut shares = construct_shares(t, n, &secret).unwrap();
-        for i in 0..todelete {
+        for _ in 0..todelete {
             shares.pop();
         }
-        let reconstructed = reconstruct(t, shares); // should error
-        assert_eq!(reconstructed, Err(SecretSharingError::InsufficientShares));
+        let reconstructed = reconstruct(shares);
+        assert!(vec_eq(&reconstructed.unwrap(), &secret));
 
+        todelete = 3;
         shares = construct_shares(t, n, &secret).unwrap();
-        for i in 0..todelete {
+        for _ in 0..todelete {
             shares.pop();
         }
-        let reconstructed_bad = reconstruct(t-1, shares); // should succeed
+        let reconstructed_bad = reconstruct(shares);
         assert!(!vec_eq(&reconstructed_bad.unwrap(), &secret));
     }
 }

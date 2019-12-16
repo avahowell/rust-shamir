@@ -1,4 +1,4 @@
 # rust-shamir
 
-Learning rust by implementing Shamir's. Features constant-time (and slow) binary field
-arithmetic, supports arbitrarily sized secrets.
+Implementation of (non-verifiable) secret sharing in Rust using fully [constant-time](https://www.bearssl.org/constanttime.html) arithmetic.
+
